@@ -1,0 +1,13 @@
+services:
+  - type: worker          # keeps running, no HTTP port needed
+    name: btc-dominance-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false       # set in Render dashboard
+      - key: GROUP_ID
+        sync: false
+      - key: THREAD_ID
+        sync: false
