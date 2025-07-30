@@ -11,13 +11,18 @@ from flask import Flask
 # Environment variables validation
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROUP_ID = os.getenv("GROUP_ID")
+THREAD_ID = os.getenv("THREAD_ID")  # New environment variable
+
 if not TOKEN or not GROUP_ID:
     logging.error("Missing required environment variables")
     exit(1)
 try:
     GROUP_ID = int(GROUP_ID)
+    # Convert THREAD_ID to integer if it exists
+    if THREAD_ID:
+        THREAD_ID = int(THREAD_ID)
 except ValueError:
-    logging.error("Invalid GROUP_ID format")
+    logging.error("Invalid GROUP_ID or THREAD_ID format")
     exit(1)
 
 INTERVAL = 3600  # 1 hour
@@ -46,16 +51,26 @@ def btc_dominance():
         raise
 
 async def send_message():
-    """Send message with proper async handling"""
+    """Send message with proper async handling and thread support"""
     try:
         dom = btc_dominance()
         text = f"₿ BTC Dominance: {escape_markdown(str(dom), 2)}%"
-        await bot.send_message(
-            chat_id=GROUP_ID,
-            text=text,
-            parse_mode="MarkdownV2"
-        )
-        logging.info("Message sent: %s", text)
+        
+        # Prepare message parameters
+        message_params = {
+            "chat_id": GROUP_ID,
+            "text": text,
+            "parse_mode": "MarkdownV2"
+        }
+        
+        # Add thread ID if provided
+        if THREAD_ID:
+            message_params["message_thread_id"] = THREAD_ID
+        
+        await bot.send_message(**message_params)
+        logging.info("Message sent to %s (thread: %s): %s", 
+                     GROUP_ID, THREAD_ID or "main", text)
+    
     except error.RetryAfter as e:
         logging.warning("Rate limited. Retrying in %s seconds", e.retry_after)
         await asyncio.sleep(e.retry_after)
