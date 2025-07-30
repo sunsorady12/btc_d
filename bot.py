@@ -7,9 +7,9 @@ from telegram import Bot
 from flask import Flask
 
 # ---------- config ----------
-TOKEN        = os.environ["7979844655:AAGIq7SVsrtAKMfpB56zpNXAC6GjdCVKzg8"]
-GROUP_ID     = int(os.environ["-1002782765335"])
-THREAD_ID    = int(os.environ.get("3", 0))
+TOKEN        = os.environ["TELEGRAM_TOKEN"]
+GROUP_ID     = int(os.environ["GROUP_ID"])
+THREAD_ID    = int(os.environ.get("THREAD_ID", 0))
 INTERVAL_S   = 3600         # 1 hour
 # ----------------------------
 
