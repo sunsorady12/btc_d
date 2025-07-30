@@ -1,35 +1,90 @@
-import os, time, threading, logging, requests
-from telegram import Bot
+import os
+import time
+import threading
+import logging
+import requests
+from telegram import Bot, error
 from flask import Flask
 
-TOKEN    = os.environ["TELEGRAM_TOKEN"]
-GROUP_ID = int(os.environ["GROUP_ID"])
-INTERVAL = 3600
+# Environment variables validation
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+GROUP_ID = os.getenv("GROUP_ID")
+if not TOKEN or not GROUP_ID:
+    logging.error("Missing required environment variables")
+    exit(1)
+try:
+    GROUP_ID = int(GROUP_ID)
+except ValueError:
+    logging.error("Invalid GROUP_ID format")
+    exit(1)
 
-logging.basicConfig(level=logging.INFO)
+INTERVAL = 3600  # 1 hour
+
+# Initialize components
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 bot = Bot(TOKEN)
 app = Flask(__name__)
 
 def btc_dominance():
-    data = requests.get("https://api.coingecko.com/api/v3/global", timeout=15).json()
-    return data["data"]["market_cap_percentage"]["btc"]
+    """Fetch BTC dominance with error handling"""
+    try:
+        response = requests.get(
+            "https://api.coingecko.com/api/v3/global",
+            timeout=15,
+            headers={'User-Agent': 'BTC-Dominance-Tracker/1.0'}
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["data"]["market_cap_percentage"]["btc"]
+    except (requests.RequestException, KeyError, ValueError) as e:
+        logging.error(f"API Error: {str(e)}")
+        raise
 
 def send_message():
-    dom = btc_dominance()
-    text = f"₿ BTC Dominance: {dom:.2f}%"
-    bot.send_message(chat_id=GROUP_ID, text=text)
-    logging.info("Sent: %s", text)
+    """Send message with retry logic"""
+    try:
+        dom = btc_dominance()
+        text = f"₿ BTC Dominance: {dom:.2f}%"
+        bot.send_message(chat_id=GROUP_ID, text=text)
+        logging.info("Message sent: %s", text)
+    except error.RetryAfter as e:
+        logging.warning("Rate limited. Retrying in %s seconds", e.retry_after)
+        time.sleep(e.retry_after)
+        send_message()  # Retry
+    except Exception as e:
+        logging.exception("Failed to send message")
 
 def scheduler():
+    """Periodic task runner"""
     while True:
         try:
             send_message()
         except Exception as e:
-            logging.exception(e)
+            logging.error("Scheduler error: %s", str(e))
         time.sleep(INTERVAL)
 
-threading.Thread(target=scheduler, daemon=True).start()
+# Start scheduler thread
+thread = threading.Thread(target=scheduler, daemon=True)
+thread.start()
 
 @app.route("/")
 def keepalive():
     return "OK", 200
+
+@app.route("/trigger", methods=["POST"])
+def manual_trigger():
+    """Endpoint for manual trigger"""
+    try:
+        send_message()
+        return "Message sent", 200
+    except Exception as e:
+        logging.exception("Manual trigger failed")
+        return "Error", 500
+
+# Run Flask app if executed directly
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
