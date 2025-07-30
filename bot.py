@@ -3,88 +3,53 @@ import time
 import threading
 import logging
 import requests
-from telegram import Bot, error
+from telegram import Bot
 from flask import Flask
 
-# Environment variables validation
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-GROUP_ID = os.getenv("GROUP_ID")
-if not TOKEN or not GROUP_ID:
-    logging.error("Missing required environment variables")
-    exit(1)
-try:
-    GROUP_ID = int(GROUP_ID)
-except ValueError:
-    logging.error("Invalid GROUP_ID format")
-    exit(1)
+# ------------- CONFIG -------------
+TOKEN     = os.environ["TELEGRAM_TOKEN"]
+GROUP_ID  = int(os.environ["GROUP_ID"])
+INTERVAL  = 3600                   # seconds between pushes
+# ----------------------------------
 
-INTERVAL = 3600  # 1 hour
-
-# Initialize components
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 bot = Bot(TOKEN)
 app = Flask(__name__)
 
-def btc_dominance():
-    """Fetch BTC dominance with error handling"""
-    try:
-        response = requests.get(
-            "https://api.coingecko.com/api/v3/global",
-            timeout=15,
-            headers={'User-Agent': 'BTC-Dominance-Tracker/1.0'}
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data["data"]["market_cap_percentage"]["btc"]
-    except (requests.RequestException, KeyError, ValueError) as e:
-        logging.error(f"API Error: {str(e)}")
-        raise
+def btc_dominance() -> float:
+    """Fetch BTC dominance from CoinGecko with retries."""
+    url = "https://api.coingecko.com/api/v3/global"
+    for attempt in range(1, 4):
+        try:
+            r = requests.get(url, timeout=15)
+            r.raise_for_status()
+            payload = r.json()
+            return payload["data"]["market_cap_percentage"]["btc"]
+        except Exception as e:
+            logging.warning("CoinGecko fetch failed (%s) – retry %s/3", e, attempt)
+            time.sleep(2 * attempt)
+    raise RuntimeError("CoinGecko unavailable after retries")
 
 def send_message():
-    """Send message with retry logic"""
-    try:
-        dom = btc_dominance()
-        text = f"₿ BTC Dominance: {dom:.2f}%"
-        bot.send_message(chat_id=GROUP_ID, text=text)
-        logging.info("Message sent: %s", text)
-    except error.RetryAfter as e:
-        logging.warning("Rate limited. Retrying in %s seconds", e.retry_after)
-        time.sleep(e.retry_after)
-        send_message()  # Retry
-    except Exception as e:
-        logging.exception("Failed to send message")
+    """Send current BTC dominance to Telegram."""
+    dom = btc_dominance()
+    text = f"₿ BTC Dominance: {dom:.2f}%"
+    bot.send_message(chat_id=GROUP_ID, text=text)
+    logging.info("Sent: %s", text)
 
 def scheduler():
-    """Periodic task runner"""
+    """Run forever, posting every INTERVAL seconds."""
     while True:
         try:
             send_message()
         except Exception as e:
-            logging.error("Scheduler error: %s", str(e))
+            logging.exception("Scheduler error: %s", e)
         time.sleep(INTERVAL)
 
-# Start scheduler thread
-thread = threading.Thread(target=scheduler, daemon=True)
-thread.start()
+# Start background thread
+threading.Thread(target=scheduler, daemon=True).start()
 
+# Flask keep-alive route (Render free tier)
 @app.route("/")
 def keepalive():
     return "OK", 200
-
-@app.route("/trigger", methods=["POST"])
-def manual_trigger():
-    """Endpoint for manual trigger"""
-    try:
-        send_message()
-        return "Message sent", 200
-    except Exception as e:
-        logging.exception("Manual trigger failed")
-        return "Error", 500
-
-# Run Flask app if executed directly
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
