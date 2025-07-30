@@ -1,5 +1,5 @@
 import os, time, threading, logging, requests
-from telegram.ext import ExtBot
+from telegram import Bot
 from flask import Flask
 
 TOKEN    = os.environ["TELEGRAM_TOKEN"]
@@ -7,7 +7,7 @@ GROUP_ID = int(os.environ["GROUP_ID"])
 INTERVAL = 3600
 
 logging.basicConfig(level=logging.INFO)
-bot = ExtBot(token=TOKEN)
+bot = Bot(TOKEN)
 app = Flask(__name__)
 
 def btc_dominance():
