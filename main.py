@@ -1,7 +1,7 @@
+# Add this at the very top
+from threading import Thread  # Missing import
 import os, requests, time, schedule
 from keep_alive import keep_alive
-# Add this at the top
-from threading import Thread
 
 # Then later:
 Thread(target=run_bot).start()
