@@ -5,7 +5,10 @@ import logging
 import requests
 from telegram import Bot
 from flask import Flask
-
+from telegram.ext import ApplicationBuilder
+app_tg = ApplicationBuilder().token(TOKEN).build()
+bot = app_tg.bot
+bot = Bot(TOKEN)
 # ------------ config ------------
 TOKEN     = os.environ["TELEGRAM_TOKEN"]
 GROUP_ID  = int(os.environ["GROUP_ID"])
