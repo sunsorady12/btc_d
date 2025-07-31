@@ -1,11 +1,10 @@
-import os  # Add this import at the top
+import os
 import time
 import threading
 import logging
 import requests
 import asyncio
 from telegram import Bot, error
-from telegram.helpers import escape_markdown
 from flask import Flask
 
 # Environment variables validation
@@ -21,6 +20,7 @@ except ValueError:
     exit(1)
 
 INTERVAL = 3600  # 1 hour
+BTC_ALERT_THRESHOLD = 55.0  # Alert when BTC dominance < 55%
 
 # Initialize components
 logging.basicConfig(
@@ -30,32 +30,77 @@ logging.basicConfig(
 bot = Bot(TOKEN)
 app = Flask(__name__)
 
-def btc_dominance():
-    """Fetch BTC dominance with error handling"""
+def fetch_market_data():
+    """Fetch market data with error handling"""
     try:
         response = requests.get(
             "https://api.coingecko.com/api/v3/global",
             timeout=15,
-            headers={'User-Agent': 'BTC-Dominance-Tracker/1.0'}
+            headers={'User-Agent': 'Crypto-Market-Tracker/1.0'}
         )
         response.raise_for_status()
         data = response.json()
-        return data["data"]["market_cap_percentage"]["btc"]
+        return data["data"]
     except (requests.RequestException, KeyError, ValueError) as e:
         logging.error(f"API Error: {str(e)}")
+        raise
+
+def calculate_metrics(data):
+    """Calculate market metrics from API data"""
+    try:
+        # BTC and ETH Dominance
+        btc_dom = data["market_cap_percentage"]["btc"]
+        eth_dom = data["market_cap_percentage"]["eth"]
+        
+        # Alt Season Index calculation (percentage of market cap excluding BTC & ETH)
+        total_mcap = data["total_market_cap"]["usd"]
+        btc_mcap = total_mcap * btc_dom / 100
+        eth_mcap = total_mcap * eth_dom / 100
+        altcoin_mcap = total_mcap - btc_mcap - eth_mcap
+        alt_season_index = (altcoin_mcap / total_mcap) * 100
+        
+        # Format values
+        total_mcap_formatted = total_mcap / 1e12  # Convert to trillions
+        market_change = data.get("market_cap_change_percentage_24h_usd", 0)
+        
+        return {
+            "btc_dom": btc_dom,
+            "alt_season_index": alt_season_index,
+            "total_mcap": total_mcap_formatted,
+            "market_change": market_change
+        }
+    except KeyError as e:
+        logging.error(f"Data missing in API response: {str(e)}")
         raise
 
 async def send_message():
     """Send message with proper async handling"""
     try:
-        dom = btc_dominance()
-        text = f"₿ BTC Dominance: {escape_markdown(str(dom), 2)}%"
+        # Fetch and process data
+        raw_data = fetch_market_data()
+        metrics = calculate_metrics(raw_data)
+        
+        # Create message
+        alert_flag = ""
+        if metrics["btc_dom"] < BTC_ALERT_THRESHOLD:
+            alert_flag = "🚨 *ALERT: BTC DOMINANCE UNDER 55%!*\n\n"
+            
+        text = (
+            f"{alert_flag}"
+            f"₿ *BTC Dominance*: `{metrics['btc_dom']:.2f}%`\n"
+            f"🌱 *Alt Season Index*: `{metrics['alt_season_index']:.2f}%`\n"
+            f"🌐 *Total Market Cap*: `${metrics['total_mcap']:.2f}T`\n"
+            f"📈 *24h Change*: `{metrics['market_change']:+.2f}%`"
+        )
+
         await bot.send_message(
             chat_id=GROUP_ID,
             text=text,
             parse_mode="MarkdownV2"
         )
-        logging.info("Message sent: %s", text)
+        logging.info("Message sent with BTC: %.2f%%, Alt Season: %.2f%%", 
+                    metrics['btc_dom'], metrics['alt_season_index'])
+        
     except error.RetryAfter as e:
         logging.warning("Rate limited. Retrying in %s seconds", e.retry_after)
         await asyncio.sleep(e.retry_after)
